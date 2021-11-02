@@ -1,0 +1,599 @@
+---
+title: "2021_fdc_final_code"
+author: "Hayden Vaughn"
+date: "10/31/2021"
+output: html_document
+---
+
+# ASA Fall Data Challenge Code 
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readr)
+```
+
+## Data Gathering
+
+### Read in dataset
+
+The original data set used the string NULL instead of NA, which causes the columns of the the data set to be imported as string type rather than numeric.  To fix this we changed all NULLs in the dataset to NAs in the original excel file and then uploaded it to github, to then be able to import into RStudio.
+
+```{r, message=FALSE}
+fdc <- read_csv("https://raw.githubusercontent.com/kitadasmalley/fallChallenge2021/main/Data/fallFood.csv")
+```
+
+## Data Cleaning
+
+### Filtering for only rows in the dataset containing data about Oregon census tracts
+
+#### Subset fdc to get only oregon data
+
+Since our team is comprised of Willamette University students located in Salem, OR, we decided to concentrate our analysis on Oregon.  To do this we filtered the original dataset for only census tracts starting with the sequence 41, Oregon's state code.
+
+```{r}
+oregon <- fdc %>% 
+  filter(substring(CensusTract, 1, 2)=="41")
+```
+
+### Subset oregon to get only rows complete data
+
+To simplify calculations, we decided to further filter the Oregon dataset to only include the rows whose data is complete.
+
+```{r}
+na_oregon <- na.omit(oregon)
+na_oregon %>% 
+  summarize(sum_na = sum(is.na(na_oregon)))
+```
+
+## Exploratory Data Analysis
+
+### Corralation Matrix of urban
+
+To start off our EDA we decided to build a correlation matrix of all the variables pertaining to information about populations living outside one mile of a grocery store.  We call this group the Urban population/subgroup. 
+
+```{r}
+library(viridisLite)
+col = viridis(20)
+hm_data_urb <- na_oregon %>% 
+  select(c(Urban,Pop2010,OHU2010,NUMGQTRS,PCTGQTRS,LowIncomeTracts,
+           PovertyRate,MedianFamilyIncome,LA1and10,LAPOP1_10,lapop1,lapop1share,laseniors1,
+           laseniors1share,lawhite1,lawhite1share,lablack1,lablack1share,laasian1,
+           laasian1share,lanhopi1,lanhopi1share,laaian1,laaian1share,laomultir1,
+           laomultir1share,lahisp1,lahisp1share,lahunv1,lahunv1share,lasnap1,lasnap1share,
+           TractSeniors,TractWhite,TractBlack,TractAsian,TractNHOPI,
+           TractAIAN,TractOMultir,TractHispanic,TractHUNV,TractSNAP))
+cormat_urb<-signif(cor(hm_data_urb),2)
+```
+
+### Heatmap Urban
+
+In order to better visualize the relationships between the variables, we made a heatmap of the urban sub group's correlation matrix.
+
+```{r}
+heatmap(cormat_urb, col=col, symm=TRUE,)
+```
+
+### Correlation Matrix Rural
+
+Now we repeated the process for variables that described the the rural population/subgroup.
+
+```{r}
+hm_data_rur <- na_oregon %>% 
+  select(c(Urban,Pop2010,OHU2010,NUMGQTRS,PCTGQTRS,LowIncomeTracts,
+           PovertyRate,MedianFamilyIncome,LA1and10,LAPOP1_10,lapop10,lapop10share,lalowi10,
+           lalowi10share,lakids10,lakids10share,laseniors10,laseniors10share,lawhite10,
+           lawhite10share,lablack10,lablack10share,laasian10,laasian10share,lanhopi10,
+           lanhopi10share,laaian10,laaian10share,laomultir10,laomultir10share,lahisp10,
+           lahisp10share,lahunv10,lahunv10share,lasnap10,lasnap10share,TractSeniors,
+           TractWhite,TractBlack,TractAsian,TractNHOPI,TractAIAN,TractOMultir,TractHispanic,
+           TractHUNV,TractSNAP))
+cormat_rur<-signif(cor(hm_data_rur),2)
+```
+
+### Heatmap Rural
+
+```{r}
+heatmap(cormat_rur, col=col, symm=TRUE,)
+```
+
+## Linear Regression
+
+### Further Data Cleaning
+
+After initial analysis of the data, we discovered that because a lot of the variables are breakdowns of the overall tract populations, it caused a lot of co-linearity between the variables.  To solve this, we narrowed down our candidate variables for building models to those that were not co-linear. 
+
+```{r}
+final_data <- na_oregon %>%
+  select(c(LILATracts_1And10,LAPOP1_10,Urban,PCTGQTRS,
+           PovertyRate,MedianFamilyIncome,lakids1,
+           laseniors1,lablack1,lahisp1, lasnap1,
+           lakids10,laseniors10,lablack10,lahisp10, lasnap10,
+           lahunv1,lahunv10, lapop1share, lapop10share))
+```
+
+
+### Model for Urban subgroup
+
+We will build this model with the lapop1share variable, share of the tract living outside one mile from a grocery store, as the response variable.
+
+#### Split the data into training and testing sets
+
+Before we train a regression model, we need to split the final_data dataset into two sets, one to train the model on, and then one to test how well the model predicts. 
+
+```{r}
+sample_1 <- sample(1:nrow(final_data), nrow(final_data)/2) 
+data_train <- final_data[sample_1,]
+data_test <- final_data[-sample_1,]
+```
+
+#### Inststall packages for building the model
+
+Then before we start any model training, we need to install  and call three R packages that we'll be using to build our models.
+
+```{r, message=FALSE}
+##install.packages("randomForest")##
+##install.packages("caret")##
+##install.packages("e1071")##
+library(randomForest)
+library(caret)
+library(e1071)
+```
+
+#### Define the control
+
+An important step in creating and training a model is building the control paramaters ro judge how well the model preforms.  In this case, we decided that 10-fold cross validation would be the best model performance evaluator.  
+
+```{r}
+
+trControl <- trainControl(method = "cv",
+    number = 10,
+    search = "grid")
+```
+
+#### First run regression on default to see the baseline accuracy
+
+Now that all the setup is complete, it is time to build a model. We decided to use the random forest method to build this model, and we used default parameters for the rest. 
+
+```{r}
+set.seed(1234)
+# Run the model
+rf_default_urb <- train(lapop1share~.,
+    data = data_train,
+    method = "rf",
+    trControl = trControl)
+```
+
+#### Expand the grid to make r^2 better
+
+After seeing the results from the model built with default parameters, we decided to expand the forest to trying 20 specific mtrys in order to pinpoint the best mtry value. 
+
+```{r}
+set.seed(1234)
+# Run the model
+set.seed(1234)
+tuneGrid <- expand.grid(.mtry = c(30: 50))
+rf_mtry_urb <- train(lapop1share~.,
+    data = data_train,
+    method = "rf",
+    tuneGrid = tuneGrid,
+    trControl = trControl)
+```
+
+#### Pick best mtry
+
+We then saved the best mtry value to use as a tune for the next model build.
+
+```{r}
+best_mtry_urb <- rf_mtry_urb$bestTune$mtry
+best_mtry_urb
+```
+
+#### Fit the final model with new parameters
+
+Although there are more parameters we could have tuned, we felt that only tuning the mtry produced a very sufficient model for prediction.
+
+```{r}
+set.seed(1234)
+tuneGrid <- expand.grid(.mtry = best_mtry_urb)
+rf_fit_urb <- train(lapop1share~.,
+    data = data_train,
+    method = "rf",
+    tuneGrid = tuneGrid,
+    trControl = trControl)
+rf_fit_urb
+rf_fit_urb$results
+```
+
+#### Analyze the Final Model
+
+After fitting our model, we want to see how well it can be used for prediction purposes. before we see that, we need to install and call another R package.  We also decided that we would use MSE to see how well we built the model.
+
+
+```{r, message=FALSE}
+#install.packages("ModelMetrics")
+library(ModelMetrics)
+```
+```{r}
+prediction_urb <-predict(rf_fit_urb, data_test)
+mse(prediction_urb,data_test$lapop1share)
+```
+
+#### Look at which variables are most important
+
+Another thing we can do, is see which variables our random forest deemed to be important.  This will help us understand what combination of settings create food insecurity.
+
+```{r}
+var_imp_urb <- varImp(rf_fit_urb)
+var_imp_urb
+```
+
+### Model for Rural Subgroup
+
+We will build this model with the lapop10share variable, share of the tract living outside ten miles from a grocery store, as the response variable.
+
+#### First run regression on default to see the baseline accuracy
+
+Now we will repeat the process of model building. 
+
+```{r}
+set.seed(1234)
+# Run the model
+rf_default_rur <- train(lapop10share~.,
+    data = data_train,
+    method = "rf",
+    trControl = trControl)
+```
+
+#### Expand the grid to make r^2 better
+
+```{r}
+set.seed(1234)
+# Run the model
+set.seed(1234)
+tuneGrid <- expand.grid(.mtry = c(30: 50))
+rf_mtry_rur <- train(lapop10share~.,
+    data = data_train,
+    method = "rf",
+    tuneGrid = tuneGrid,
+    trControl = trControl)
+```
+
+#### Pick best mtry
+
+```{r}
+best_mtry_rur <- rf_mtry_rur$bestTune$mtry
+best_mtry_rur
+```
+
+#### Fit the final model with new parameters
+
+```{r}
+set.seed(1234)
+tuneGrid <- expand.grid(.mtry = best_mtry_rur)
+rf_fit_rur <- train(lapop10share~.,
+    data = data_train,
+    method = "rf",
+    tuneGrid = tuneGrid,
+    trControl = trControl)
+rf_fit_rur
+rf_fit_rur$results
+```
+
+#### Analyze the Final Model
+
+```{r}
+prediction_rur <-predict(rf_fit_rur, data_test)
+mse(prediction_urb,data_test$lapop10share)
+```
+
+#### Look at which variables are most important
+
+```{r}
+var_imp_rur <- varImp(rf_fit_rur)
+var_imp_rur
+```
+
+## Tree Regression
+
+Since many explanatory variables can be used to create linear regression models, they tend to be hard to interpret.  Thankfully there is also tree regression which produces a much more intuitive model.  Here we also have to download another R package. 
+
+```{r, message=FALSE}
+#install.packages("rpart")
+library(rpart)
+```
+
+### Create classification tree
+
+Here we built tree and made the classification tree's response variable be LILATracts_1And10, the flag for a low income low access tracts. 
+
+```{r}
+tree_lali_flag<-rpart(LILATracts_1And10~., data=final_data,
+                     control=rpart.control(minsplit=1),
+                     method="class")
+```
+
+### Visualizing the tree
+
+After building the tree, we now will visualize it.
+
+```{r}
+par(mfrow=c(1,1))
+plot(tree_lali_flag , uniform=TRUE,margin=0.2,
+     main="Classification Tree for Low Access Low Income Flag")
+text(tree_lali_flag , use.n=TRUE, all=TRUE, cex=.8)
+```
+
+### Alternate Visualization 
+
+Here is the same tree, but visualized with a different style.  It uses a different R package, so that package needed to be installed and loaded as well.
+
+```{r, message=FALSE}
+#install.packages("rpart.plot")
+library(rpart.plot)
+```
+
+```{r}
+prp(tree_lali_flag, faclen = 0, cex = 0.7, extra=1, space=.5)
+```
+
+## Logistic Regression
+
+We chose to do linear regression because we wanted to a binary response to predict if a tract will be flagged as a low income and low access tract.  We built a logistic model with LILATracts_1And10 as our response variable again. 
+
+But first we need to call another R package into our environment.
+
+```{r, message=FALSE}
+library(leaps)
+```
+
+#### Find best subset of response variables for up to eight model sizes
+
+To see which of our variables from the final_data dataset should be used for each sized model, we used a hybrid method to pick the best combination of explanatory variables that should be used for models with one or up to eight explanatory variables.
+
+```{r}
+regfit_LILATracts_1And10 <- regsubsets(LILATracts_1And10~.,data=final_data)
+summary(regfit_LILATracts_1And10)
+```
+
+### One explanatory variable logistic model
+
+With this model and all the rest we will be taking the variables indicated above as the best explanatory variable for each level and pasting them into the model. 
+
+```{r,warning=FALSE}
+var_2_mod <- glm(LILATracts_1And10~lasnap10,data=data_train)
+```
+
+#### Model Performance
+
+Also for every model, we will be creating a confusion matrix to use to find each model's error rate, which will be the standard of performance for the models. 
+
+```{r}
+pred1 <- predict(var_2_mod,data = data_test,type="response")
+
+conf_mat1<-data.frame(LILATracts_1And10=final_data$LILATracts_1And10,
+                      pred_LILATracts_1And10=pred1>.5)%>%
+  group_by(LILATracts_1And10, pred_LILATracts_1And10)%>%
+  summarise(n=n())
+
+conf_mat1
+```
+
+#### Error rate  
+
+```{r}
+correct <- conf_mat1$n[c(1,4)]
+er_1 <- 1-sum(correct)/sum(conf_mat1$n)
+er_1
+```
+
+### Two explanatory variable logistic model
+
+```{r,warning=FALSE}
+var_3_mod <- glm(LILATracts_1And10~lasnap10+MedianFamilyIncome,data=data_train)
+```
+
+#### Model Performance
+
+```{r}
+pred2 <- predict(var_3_mod,data = data_test,type="response")
+
+conf_mat2<-data.frame(LILATracts_1And10=final_data$LILATracts_1And10,
+                      pred_LILATracts_1And10=pred2>.5)%>%
+  group_by(LILATracts_1And10, pred_LILATracts_1And10)%>%
+  summarise(n=n())
+
+conf_mat2
+```
+
+#### Error rate
+
+```{r}
+correct2 <- conf_mat2$n[c(1,4)]
+er_2 <- 1-sum(correct2)/sum(conf_mat2$n)
+er_2
+``` 
+
+### Three explanatory variable logistic model
+
+```{r,warning=FALSE}
+var_4_mod <- glm(LILATracts_1And10~lasnap10+MedianFamilyIncome+Urban,data=data_train)
+```
+
+#### Model Perfromance
+
+```{r}
+pred3 <- predict(var_4_mod,data = data_test,type="response")
+
+conf_mat3<-data.frame(LILATracts_1And10=final_data$LILATracts_1And10,
+                      pred_LILATracts_1And10=pred3>.5)%>%
+  group_by(LILATracts_1And10, pred_LILATracts_1And10)%>%
+  summarise(n=n())
+
+conf_mat3
+```
+
+#### Error rate
+
+```{r}
+correct3 <- conf_mat3$n[c(1,4)]
+er_3 <- 1-sum(correct3)/sum(conf_mat3$n)
+er_3
+```
+
+### Four explanatory variable logistic model
+```{r,warning=FALSE}
+var_5_mod <- glm(LILATracts_1And10~lasnap10+MedianFamilyIncome+Urban+lakids1,data=data_train)
+```
+
+#### Model Performance
+
+```{r}
+pred4 <- predict(var_5_mod,data = data_test,type="response")
+
+conf_mat4<-data.frame(LILATracts_1And10=final_data$LILATracts_1And10,
+                      pred_LILATracts_1And10=pred4>.5)%>%
+  group_by(LILATracts_1And10, pred_LILATracts_1And10)%>%
+  summarise(n=n())
+
+conf_mat4
+```
+
+#### Error rate
+
+```{r}
+correct4 <- conf_mat4$n[c(1,4)]
+er_4 <- 1-sum(correct4)/sum(conf_mat4$n)
+er_4
+```
+
+### Five explanatory variable logistic model
+
+```{r,warning=FALSE}
+var_6_mod <- glm(LILATracts_1And10~lasnap10+MedianFamilyIncome+Urban+lakids1+lahunv10,
+                 data=data_train)
+```
+
+#### Model Performance
+
+```{r}
+pred5 <- predict(var_6_mod,data = data_test,type="response")
+
+conf_mat5<-data.frame(LILATracts_1And10=final_data$LILATracts_1And10,
+                      pred_LILATracts_1And10=pred5>.5)%>%
+  group_by(LILATracts_1And10, pred_LILATracts_1And10)%>%
+  summarise(n=n())
+
+conf_mat5
+```
+
+#### Error rate
+
+```{r}
+correct5 <- conf_mat5$n[c(1,4)]
+er_5 <- 1-sum(correct5)/sum(conf_mat5$n)
+er_5
+```
+
+### Six explanatory variable logistic model
+
+```{r,warning=FALSE}
+var_7_mod <- glm(LILATracts_1And10~lasnap10+MedianFamilyIncome+Urban+lakids10+lahunv10+
+                 lahunv1,data=data_train)
+```
+
+#### Model Performance
+
+```{r}
+pred6 <- predict(var_7_mod,data = data_test,type="response")
+
+conf_mat6<-data.frame(LILATracts_1And10=final_data$LILATracts_1And10,
+                      pred_LILATracts_1And10=pred6>.5)%>%
+  group_by(LILATracts_1And10, pred_LILATracts_1And10)%>%
+  summarise(n=n())
+
+conf_mat6
+```
+
+#### Error rate
+
+```{r}
+correct6 <- conf_mat6$n[c(1,4)]
+er_6 <- 1-sum(correct6)/sum(conf_mat6$n)
+er_6
+```
+
+### Seven explanatory variable logistic model
+
+```{r,warning=FALSE}
+var_8_mod <- glm(LILATracts_1And10~lasnap10+MedianFamilyIncome+Urban+lakids10+lahunv10+
+                 lahunv1+lablack10,data=data_train)
+```
+
+#### Model Perfromance
+
+```{r}
+pred7 <- predict(var_8_mod,data = data_test,type="response")
+
+conf_mat7<-data.frame(LILATracts_1And10=final_data$LILATracts_1And10,
+                      pred_LILATracts_1And10=pred7>.5)%>%
+  group_by(LILATracts_1And10, pred_LILATracts_1And10)%>%
+  summarise(n=n())
+
+conf_mat7
+```
+
+#### Error Rate
+
+```{r}
+correct7 <- conf_mat7$n[c(1,4)]
+er_7 <- 1-sum(correct7)/sum(conf_mat7$n)
+er_7
+```
+
+### Eight explanatory variable logistic model
+```{r,warning=FALSE}
+var_9_mod <- glm(LILATracts_1And10~lasnap10+MedianFamilyIncome+Urban+lakids10+lahunv10+
+                 lahunv1+lablack10+lahisp1,data=data_train)
+```
+
+### Model Performance
+```{r}
+pred8 <- predict(var_9_mod,data = data_test,type="response")
+
+conf_mat8<-data.frame(LILATracts_1And10=final_data$LILATracts_1And10,
+                      pred_LILATracts_1And10=pred8>.5)%>%
+  group_by(LILATracts_1And10, pred_LILATracts_1And10)%>%
+  summarise(n=n())
+
+conf_mat8
+```
+
+#### Error Rate
+```{r}
+correct8 <- conf_mat8$n[c(1,4)]
+er_8 <- 1-sum(correct8)/sum(conf_mat8$n)
+er_8
+```
+
+### Picking best logsitic model
+
+For our final logistic model, wo would choose the model that had the lowest error rate. To easily see that, we first made a data frame of all the error rates and their corresponding indexes. Then we created a scatter plot overlayed with a line chart to easily show which model performed the best.
+
+#### Creating the data frame
+```{r}
+error <- data.frame(number_of_exp_vars=c(1,2,3,4,5,6,7,8),error_rate=c(er_1,er_2,er_3,er_4,er_5,
+                                                                   er_6,er_7,er_8))
+str(error)
+```
+
+#### Graph of the error rates
+```{r}
+ggplot(error,aes(number_of_exp_vars,error_rate))+
+  geom_point()+
+  geom_line()
+```
+
+From the graph we can clearly see that the simplest model with only one explanatory variable was the most accurate at predicting low income low access tracts in Oregon.
+
+
